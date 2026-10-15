@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 — unreleased
+## 0.1.0 — 2026-10-15
 
 - Successful copies are silent by default; `--verbose` reports local status.
 - Bash CLI for arguments, stdin and files; bounded private spooling, NUL rejection,
@@ -10,3 +10,5 @@
 - Native Wayland, X11, macOS and WSL candidates with automatic SSH-aware routing.
 - Bats tests, ShellCheck, staged installation and Linux/macOS CI configuration.
 - English and French documentation; no real-terminal compatibility claims yet.
+
+- Account for newer ShellCheck diagnostics on trap-registered cleanup functions.

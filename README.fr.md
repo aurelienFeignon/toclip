@@ -17,7 +17,7 @@ toclip --file fichier.txt
 ## Installation
 
 ```sh
-git clone <url-du-depot>
+git clone https://github.com/aurelienFeignon/toclip.git
 cd toclip
 sudo make install
 # Sans privilèges administrateur :

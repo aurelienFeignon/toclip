@@ -16,7 +16,7 @@ toclip --file file.txt
 ## Installation
 
 ```sh
-git clone <repository-url>
+git clone https://github.com/aurelienFeignon/toclip.git
 cd toclip
 sudo make install
 # Without root:

@@ -67,7 +67,7 @@ fi
 umask 077
 work=$(mktemp -d "${TMPDIR:-/tmp}/toclip.XXXXXXXX") || fail 1 'cannot create private temporary directory'
 # ShellCheck cannot follow a function registered through trap.
-# shellcheck disable=SC2317
+# shellcheck disable=SC2317,SC2329
 cleanup() { rm -rf -- "$work"; }
 trap cleanup EXIT
 trap 'exit 129' HUP
