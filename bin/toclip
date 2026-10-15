@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# Bash 3.2+; content always travels through private files.
+set -o pipefail
+VERSION=0.1.0
+ROOT=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+if [[ -r $ROOT/lib/toclip/detect.sh ]]; then LIB=$ROOT/lib/toclip; else LIB=$ROOT/lib; fi
+# shellcheck source=lib/detect.sh
+source "$LIB/detect.sh"
+# shellcheck source=lib/native.sh
+source "$LIB/native.sh"
+# shellcheck source=lib/osc52.sh
+source "$LIB/osc52.sh"
+fail() { printf 'toclip: %s\n' "$2" >&2; exit "$1"; }
+usage() {
+    cat <<'HELP'
+Usage: toclip [OPTIONS] [--] [TEXT ...]
+Copy text from arguments (joined with spaces, no added newline), stdin, or a file.
+  --file PATH          Read a file instead of arguments or stdin
+  --backend MODE       auto (default), native, osc52
+  --max-bytes N        Maximum input bytes (default: 75000)
+  --no-newline         Remove one final LF byte
+  --check              Report local backend readiness; does not copy
+  --verbose            Report backend and local result on stderr
+  --quiet              Suppress nonessential messages
+  --help               Show help
+  --version            Show version
+Exit: 0 local success, 1 I/O/backend failure, 2 usage, 3 unavailable,
+      4 size limit, 5 unsupported NUL input. OSC 52 success is unconfirmed.
+HELP
+}
+backend=auto max=75000 file='' have_file=0 strip=0 check=0 verbose=0 quiet=0
+while (($#)); do
+    case $1 in
+        --help) usage; exit 0;;
+        --version) printf 'toclip %s\n' "$VERSION"; exit 0;;
+        --backend|--max-bytes|--file)
+            (($# >= 2)) || fail 2 "missing value for $1"
+            case $1 in --backend) backend=$2;; --max-bytes) max=$2;; --file) file=$2; have_file=1;; esac
+            shift 2;;
+        --no-newline) strip=1; shift;;
+        --check) check=1; shift;;
+        --verbose) verbose=1; shift;;
+        --quiet) quiet=1; shift;;
+        --) shift; break;;
+        -*) fail 2 'unknown option (use -- before text beginning with -)';;
+        *) break;;
+    esac
+done
+case $backend in auto|native|osc52) ;; *) fail 2 'invalid backend';; esac
+[[ $max =~ ^[0-9]+$ && ${#max} -le 9 ]] || fail 2 'max-bytes must be an integer from 0 to 999999999'
+max=$((10#$max))
+((have_file == 0 || $# == 0)) || fail 2 'file and text arguments are mutually exclusive'
+if ((check)); then
+    (($# == 0 && have_file == 0)) || fail 2 '--check does not accept input'
+    if [[ $backend != osc52 ]] && ! { [[ $backend == auto ]] && is_ssh; }; then
+        native_candidates
+        if ((${#candidates[@]})); then
+            ((quiet)) || printf 'toclip: native candidate %s; connection and copy not verified\n' "${candidates[0]}" >&2
+            exit 0
+        fi
+    fi
+    [[ $backend != native ]] || fail 3 'no native candidate; check display variables and installed tools'
+    osc_ready || fail 3 "$osc_error"
+    ((quiet)) || printf 'toclip: OSC 52 locally ready; terminal support and clipboard unconfirmed\n' >&2
+    exit 0
+fi
+umask 077
+work=$(mktemp -d "${TMPDIR:-/tmp}/toclip.XXXXXXXX") || fail 1 'cannot create private temporary directory'
+# ShellCheck cannot follow a function registered through trap.
+# shellcheck disable=SC2317
+cleanup() { rm -rf -- "$work"; }
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+# Bound the spool even for unbounded stdin. A producer may receive SIGPIPE.
+if ((have_file)); then
+    [[ -f $file && -r $file ]] || fail 1 'input file is not a readable regular file'
+    head -c "$((max + 1))" < "$file" > "$work/input" || fail 1 'cannot read input file'
+elif (($#)); then
+    { printf '%s' "$1"; shift; for arg in "$@"; do printf ' %s' "$arg"; done; } > "$work/input" || fail 1 'cannot spool arguments'
+else
+    [[ ! -t 0 ]] || fail 2 'provide text, --file, or piped stdin'
+    head -c "$((max + 1))" > "$work/input" || fail 1 'cannot read stdin'
+fi
+bytes=$(wc -c < "$work/input")
+((bytes <= max)) || fail 4 'input exceeds --max-bytes; nothing copied'
+LC_ALL=C tr -d '\000' < "$work/input" > "$work/text" || fail 1 'cannot validate input'
+cmp -s "$work/input" "$work/text" || fail 5 'NUL bytes are unsupported; nothing copied'
+if ((strip && bytes > 0)); then
+    last=$(tail -c 1 "$work/input" | od -An -tu1)
+    if [[ $last =~ ^[[:space:]]*10[[:space:]]*$ ]]; then
+        head -c "$((bytes - 1))" "$work/input" > "$work/text" || fail 1 'cannot remove final newline'
+        mv "$work/text" "$work/input" || fail 1 'cannot prepare input'
+    fi
+fi
+if [[ $backend != osc52 ]] && ! { [[ $backend == auto ]] && is_ssh; }; then
+    if native_copy "$work/input"; then
+        if ((verbose && !quiet)); then printf 'toclip: native tool %s completed\n' "$native_tool" >&2; fi
+        exit 0
+    fi
+    [[ $backend != native ]] || fail 3 'native tools unavailable or failed; check graphical session'
+fi
+osc_ready || fail 3 "$osc_error"
+osc_copy "$work/input" || fail 1 'OSC 52 encoding or terminal write failed'
+if ((verbose && !quiet)); then printf 'toclip: OSC 52 emitted; clipboard update is unconfirmed\n' >&2; fi
+exit 0
